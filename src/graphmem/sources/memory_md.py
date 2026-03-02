@@ -66,9 +66,11 @@ class MemoryMdSource(RuleSource):
         if direct_matches:
             return list(dict.fromkeys(direct_matches))
 
+        # FIX (Opus review #4): second context was checking lines[index-1] instead
+        # of lines[index-2] for the heading guard — copy-paste bug.
         contexts = [
             lines[index - 1] if index - 1 >= 0 and lines[index - 1].startswith("#") else "",
-            lines[index - 2] if index - 2 >= 0 and lines[index - 1].startswith("#") else "",
+            lines[index - 2] if index - 2 >= 0 and lines[index - 2].startswith("#") else "",
         ]
 
         seen: list[str] = []
