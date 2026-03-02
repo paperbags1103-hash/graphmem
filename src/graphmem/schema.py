@@ -37,7 +37,10 @@ class GraphStore:
 
     @staticmethod
     def _quote(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
+        # Kuzu Cypher uses \' for single-quote escaping (not '' like SQL).
+        # Escape backslashes first to avoid double-escaping.
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        return f"'{escaped}'"
 
     @classmethod
     def _string(cls, value: str) -> str:
@@ -58,23 +61,31 @@ class GraphStore:
         if result is None:
             return []
 
-        if hasattr(result, "get_as_df"):
-            df = result.get_as_df()
-            if hasattr(df, "itertuples"):
-                return list(df.itertuples(index=False, name=None))
-            return []
-
-        if hasattr(result, "fetch_as_df"):
-            df = result.fetch_as_df()
-            if hasattr(df, "itertuples"):
-                return list(df.itertuples(index=False, name=None))
-            return []
-
+        # Prefer iterator-style (has_next/get_next) — no numpy dependency.
         if hasattr(result, "has_next") and hasattr(result, "get_next"):
             rows: list[Any] = []
             while result.has_next():
                 rows.append(result.get_next())
             return rows
+
+        # Fall back to DataFrame (requires numpy/pandas).
+        if hasattr(result, "get_as_df"):
+            try:
+                df = result.get_as_df()
+                if hasattr(df, "itertuples"):
+                    return list(df.itertuples(index=False, name=None))
+                return []
+            except (ImportError, ModuleNotFoundError):
+                pass
+
+        if hasattr(result, "fetch_as_df"):
+            try:
+                df = result.fetch_as_df()
+                if hasattr(df, "itertuples"):
+                    return list(df.itertuples(index=False, name=None))
+                return []
+            except (ImportError, ModuleNotFoundError):
+                pass
 
         if hasattr(result, "__iter__") and not isinstance(result, (str, bytes)):
             return list(result)

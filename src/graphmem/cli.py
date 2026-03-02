@@ -100,7 +100,9 @@ def scan(
         git_repo = git.Repo(str(repo), search_parent_directories=True)
         head = git_repo.commit(commit)
         if head.parents:
-            diffs = head.diff(head.parents[0], create_patch=True)
+            # FIX: parent.diff(head) = changes FROM parent TO head = actual commit additions.
+            # head.diff(parent) is reversed — "+" lines are what got REMOVED, not added.
+            diffs = head.parents[0].diff(head, create_patch=True)
         else:
             diffs = head.diff(git.NULL_TREE, create_patch=True)
     except Exception as exc:
