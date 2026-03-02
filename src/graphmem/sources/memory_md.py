@@ -51,12 +51,18 @@ _SCOPE_TABLE: list[tuple[re.Pattern[str], list[str]]] = [
         re.compile(r"\b(github\s+actions?|\.github|workflow|\.yml\s+ci)\b", re.IGNORECASE),
         [".github/**", "*.yml", "*.yaml"],
     ),
-    # Leaflet / React / JS library imports → JS/TS files
+    # Actual import/require *syntax* → JS/TS files.
+    # FIX (Opus pre-release): previously matched library names (react, vue, leaflet)
+    # as a scope signal — this caused "react-grid-layout" to scope to *.ts instead
+    # of package.json, making VersionPinMatcher miss package.json changes.
+    # Now only matches actual import/require call syntax, not library names.
     (
-        re.compile(r"\b(import|require|leaflet|react|vue|svelte)\b", re.IGNORECASE),
+        re.compile(r"\bimport\s+\w|\brequire\s*\(", re.IGNORECASE),
         ["*.ts", "*.tsx", "*.js", "*.jsx"],
     ),
 ]
+
+_VERSION_RE = re.compile(r"v?\d+\.\d+")
 
 
 @dataclass
@@ -206,11 +212,36 @@ class MemoryMdSource(RuleSource):
         return seen
 
     def _infer_scope(self, content: str) -> list[str]:
-        """Infer file-scope patterns from rule content using keyword heuristics."""
+        """Infer file-scope patterns from rule content using keyword heuristics.
+
+        FIX (Opus pre-release): version pin rules always include package manifest
+        files in their scope, regardless of what other scope was inferred.
+        This prevents VersionPinMatcher from missing package.json changes when
+        the rule content also mentions a library name.
+        """
+        base_scope: list[str] = []
         for pattern, file_patterns in _SCOPE_TABLE:
             if pattern.search(content):
-                return file_patterns
-        return []
+                base_scope = list(file_patterns)
+                break
+
+        # Version pin rules → always include common package manifests
+        _MANIFESTS = [
+            "package.json",
+            "package-lock.json",
+            "pyproject.toml",
+            "requirements*.txt",
+            "Cargo.toml",
+            "go.mod",
+        ]
+        is_version_pin = _VERSION_RE.search(content) and (
+            "고정" in content or "pin" in content.lower() or "fixed" in content.lower()
+        )
+        if is_version_pin:
+            seen = dict.fromkeys(base_scope + _MANIFESTS)
+            return list(seen)
+
+        return base_scope
 
     def _extract_pattern(self, content: str) -> str:
         quoted = re.findall(r"['\"`](.+?)['\"`]", content)

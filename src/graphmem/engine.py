@@ -125,9 +125,13 @@ class BaseMatcher(RuleMatcher):
 class VersionPinMatcher(BaseMatcher):
     # Matches versions like 4.2.0, v4.2.0, 5, 1.0.0-beta
     VERSION_RE = re.compile(r"v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE)
-    # Captures package name immediately before a version number
+    # Captures package name before a version number.
+    # FIX: allows optional quote/backtick between package name and version,
+    # e.g. "`react-grid-layout` v1.4.4" — backtick after the name was
+    # blocking the \s+ match, causing package_match = None → rule skipped.
     PACKAGE_RE = re.compile(
-        r"([A-Za-z0-9_.@/-]+)\s+v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE
+        r"([A-Za-z0-9_.@/-]+)['\"`]?\s+v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?",
+        re.IGNORECASE,
     )
 
     def match(self, rule: Rule, action: Action) -> Violation | None:
