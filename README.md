@@ -149,6 +149,71 @@ Default: `0.85`.
 
 ---
 
+## CI Integration — GitHub Action
+
+Add to `.github/workflows/graphmem.yml`:
+
+```yaml
+name: graphmem rule scan
+on: [push, pull_request]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 2}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install graphmem
+      - run: graphmem scan --memory MEMORY.md
+```
+
+graphmem will fail the CI check (`exit 1`) when violations are found, blocking the merge.
+
+---
+
+## Pre-commit Hook
+
+Catch violations at the source — before the commit reaches remote:
+
+```bash
+# Install into current repo
+graphmem install-hook
+
+# Bypass for a specific commit
+git commit --no-verify
+
+# Remove hook
+graphmem uninstall-hook
+```
+
+The hook pipes each staged file's diff through `graphmem check` and blocks the commit if violations are found.
+
+---
+
+## Rule Sources
+
+graphmem works with any markdown file that contains hard constraint keywords.
+Pass any of these as `--memory`:
+
+```bash
+graphmem scan --memory MEMORY.md         # AI assistant long-term memory
+graphmem scan --memory AGENTS.md         # Agent operating rules
+graphmem scan --memory CONTRIBUTING.md   # Team contribution rules
+graphmem scan --memory ADR/decisions.md  # Architecture Decision Records
+```
+
+Combine multiple rule files by running `graphmem init` for each:
+
+```bash
+graphmem init --memory MEMORY.md --auto
+graphmem init --memory AGENTS.md --auto
+graphmem scan --memory MEMORY.md  # picks up rules from all previously init'd sources
+```
+
+---
+
 ## How It Works
 
 ```

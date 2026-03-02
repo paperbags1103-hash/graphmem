@@ -1,0 +1,53 @@
+name: graphmem rule scan
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  scan:
+    name: Rule compliance scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # need parent commit for diff
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install graphmem
+        run: pip install "graphmem<0.9.0"
+
+      - name: Locate rules file
+        id: rules
+        run: |
+          if [ -f "MEMORY.md" ]; then
+            echo "path=MEMORY.md" >> "$GITHUB_OUTPUT"
+          elif [ -f ".graphmem/rules.md" ]; then
+            echo "path=.graphmem/rules.md" >> "$GITHUB_OUTPUT"
+          elif [ -f "AGENTS.md" ]; then
+            echo "path=AGENTS.md" >> "$GITHUB_OUTPUT"
+          elif [ -f "CONTRIBUTING.md" ]; then
+            echo "path=CONTRIBUTING.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip (no rules file)
+        if: steps.rules.outputs.path == ''
+        run: |
+          echo "No rules file found (MEMORY.md / AGENTS.md / CONTRIBUTING.md)."
+          echo "Create one with hard rules to enable graphmem scanning."
+
+      - name: Scan commit
+        if: steps.rules.outputs.path != ''
+        run: |
+          graphmem scan \
+            --memory "${{ steps.rules.outputs.path }}" \
+            --threshold "0.85"
