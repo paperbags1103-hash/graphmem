@@ -31,8 +31,8 @@ class ContradictionEngine:
                     if violation is None:
                         continue
                     violations.append(violation)
-                    self._store_violation(action, rule, violation, action_id)
-                    break
+                    self._store_violation(action_id, rule, violation)
+                    break  # first matching matcher fires per rule
 
         return violations
 
@@ -48,29 +48,26 @@ class ContradictionEngine:
             return None
         try:
             return add_action(action)
-        except TypeError:
+        except Exception:
             return None
 
     def _store_violation(
         self,
-        action: Action,
+        action_id: str | None,
         rule: Rule,
         violation: Violation,
-        action_id: str | None,
     ) -> None:
+        """Persist violation to the graph store.
+
+        FIX (Opus review #1): previously tried add_violation(action, rule, violation)
+        which raised AttributeError (not TypeError), silently swallowed by except TypeError,
+        so violations were never persisted. Now calls the correct signature directly.
+        """
+        if action_id is None:
+            return
         add_violation = getattr(self.store, "add_violation", None)
         if not callable(add_violation):
             return
-
-        try:
-            add_violation(action, rule, violation)
-            return
-        except TypeError:
-            pass
-
-        if action_id is None:
-            return
-
         try:
             add_violation(
                 action_id,
@@ -78,7 +75,7 @@ class ContradictionEngine:
                 violation.confidence,
                 violation.reason,
             )
-        except TypeError:
+        except Exception:
             return
 
     def _relevant_rules(self, rules: Iterable[Rule], action: Action) -> list[Rule]:
@@ -126,34 +123,45 @@ class BaseMatcher(RuleMatcher):
 
 
 class VersionPinMatcher(BaseMatcher):
+    # Matches versions like 4.2.0, v4.2.0, 5, 1.0.0-beta
     VERSION_RE = re.compile(r"v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE)
-    PACKAGE_RE = re.compile(r"([A-Za-z0-9_.@/-]+)\s+v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE)
+    # Captures package name immediately before a version number
+    PACKAGE_RE = re.compile(
+        r"([A-Za-z0-9_.@/-]+)\s+v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE
+    )
 
     def match(self, rule: Rule, action: Action) -> Violation | None:
         text = self.normalize(rule.content)
         if "고정" not in text and "pin" not in text and "fixed" not in text:
             return None
 
-        rule_version_match = self.VERSION_RE.search(rule.content)
-        if not rule_version_match:
+        # FIX (Opus review #2): extract version from near the package name, not just
+        # the first number in the rule text (avoids e.g. "Python 3.11" grabbing "3"
+        # and false-positiving on any diff with "3" in it).
+        package_match = self.PACKAGE_RE.search(rule.content)
+        if not package_match:
             return None
 
-        pinned_version = rule_version_match.group(0).lstrip("v")
-        package_match = self.PACKAGE_RE.search(rule.content)
-        package_name = package_match.group(1).strip("'\"`") if package_match else ""
+        package_name = package_match.group(1).strip("'\"`")
+        # Find the version token that starts at or after the package match
+        version_match = self.VERSION_RE.search(rule.content, package_match.start())
+        if not version_match:
+            return None
+        pinned_version = version_match.group(0).lstrip("v")
 
         added = "\n".join(self.added_lines(action.diff))
         removed = "\n".join(self.removed_lines(action.diff))
+
         if package_name and package_name not in added and package_name not in removed:
             return None
 
-        added_versions = {match.lstrip("v") for match in self.VERSION_RE.findall(added)}
-        if pinned_version not in added_versions and not any(
-            version != pinned_version for version in added_versions
-        ):
+        added_versions = {m.lstrip("v") for m in self.VERSION_RE.findall(added)}
+
+        # Simplified condition (Opus review #2): just skip if no versions in diff
+        if not added_versions:
             return None
 
-        changed_to = next((version for version in added_versions if version != pinned_version), None)
+        changed_to = next((v for v in added_versions if v != pinned_version), None)
         if changed_to is None:
             return None
 
@@ -196,11 +204,10 @@ class ForbiddenCmdMatcher(BaseMatcher):
         if match:
             return self.normalize(match.group(0))
 
-        stripped = re.split(r"(금지|must not|never|하지 말)", content, maxsplit=1, flags=re.IGNORECASE)[0]
-        tokens = [token for token in re.split(r"\s+", stripped) if token]
-        if not tokens:
-            return ""
-        return self.normalize(" ".join(tokens[-3:]))
+        # FIX (Opus review #3): removed "last 3 tokens" fallback — it was a
+        # false-positive factory (e.g. "debug mode 금지" → match any "debug mode"
+        # substring in any diff). No clear candidate → skip this rule.
+        return ""
 
 
 class ValuePinMatcher(BaseMatcher):
