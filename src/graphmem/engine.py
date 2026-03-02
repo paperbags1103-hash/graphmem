@@ -126,8 +126,8 @@ class BaseMatcher(RuleMatcher):
 
 
 class VersionPinMatcher(BaseMatcher):
-    VERSION_RE = re.compile(r"v?\d+\.\d+\.\d+(?:[-+._][a-z0-9]+)?", re.IGNORECASE)
-    PACKAGE_RE = re.compile(r"([A-Za-z0-9_.@/-]+)\s+v?\d+\.\d+\.\d+", re.IGNORECASE)
+    VERSION_RE = re.compile(r"v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE)
+    PACKAGE_RE = re.compile(r"([A-Za-z0-9_.@/-]+)\s+v?\d+(?:\.\d+)*(?:[-+._][a-z0-9]+)?", re.IGNORECASE)
 
     def match(self, rule: Rule, action: Action) -> Violation | None:
         text = self.normalize(rule.content)
@@ -148,8 +148,9 @@ class VersionPinMatcher(BaseMatcher):
             return None
 
         added_versions = {match.lstrip("v") for match in self.VERSION_RE.findall(added)}
-        removed_versions = {match.lstrip("v") for match in self.VERSION_RE.findall(removed)}
-        if pinned_version not in removed_versions and pinned_version not in added_versions:
+        if pinned_version not in added_versions and not any(
+            version != pinned_version for version in added_versions
+        ):
             return None
 
         changed_to = next((version for version in added_versions if version != pinned_version), None)
@@ -217,11 +218,7 @@ class ValuePinMatcher(BaseMatcher):
         key = rule_assignment.group(1)
         pinned_value = rule_assignment.group(3)
 
-        removed_assignments = self._find_assignments(self.removed_lines(action.diff), key)
         added_assignments = self._find_assignments(self.added_lines(action.diff), key)
-        if pinned_value not in removed_assignments:
-            return None
-
         new_value = next((value for value in added_assignments if value != pinned_value), None)
         if new_value is None:
             return None
@@ -240,11 +237,15 @@ class ValuePinMatcher(BaseMatcher):
 
 class SecretLeakMatcher(BaseMatcher):
     SECRET_PATTERNS = {
-        "openai": re.compile(r"\bsk-[A-Za-z0-9]{10,}\b"),
+        "openai": re.compile(r"\bsk-[A-Za-z0-9_-]{10,}\b"),
         "aws": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
         "github": re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
         "slack": re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
     }
+    GENERIC_SECRET_RE = re.compile(
+        r"\b[A-Za-z_][\w-]*(?:API[_-]?KEY|SECRET)[\w-]*\b\s*[:=]\s*(['\"])(.{10,}?)\1",
+        re.IGNORECASE,
+    )
 
     def match(self, rule: Rule, action: Action) -> Violation | None:
         text = self.normalize(rule.content)
@@ -258,4 +259,7 @@ class SecretLeakMatcher(BaseMatcher):
                 if pattern.search(line):
                     reason = f"Rule forbids hardcoded secrets, but diff adds a suspected {label} secret."
                     return self.make_violation(rule, action, 0.99, reason)
+            if self.GENERIC_SECRET_RE.search(line):
+                reason = "Rule forbids hardcoded secrets, but diff adds a quoted API key or secret value."
+                return self.make_violation(rule, action, 0.97, reason)
         return None
