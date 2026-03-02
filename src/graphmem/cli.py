@@ -273,6 +273,44 @@ def status(
     typer.echo(f"Violations: {violation_count}")
 
 
+@app.command("install-hook")
+def install_hook(
+    repo: Path = typer.Option(Path("."), "--repo", help="Repository root (default: current dir)"),
+) -> None:
+    """Install graphmem pre-commit hook into a git repository.
+
+    Checks staged file diffs against hard rules before each commit.
+    To bypass a specific commit: git commit --no-verify
+    """
+    from . import hooks
+
+    try:
+        hook_path = hooks.install(str(repo))
+        typer.echo(f"✅  Hook installed: {hook_path}")
+        typer.echo("    Each commit will now be scanned for rule violations.")
+        typer.echo("    Bypass with: git commit --no-verify")
+    except FileNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+    except RuntimeError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command("uninstall-hook")
+def uninstall_hook(
+    repo: Path = typer.Option(Path("."), "--repo", help="Repository root (default: current dir)"),
+) -> None:
+    """Remove the graphmem pre-commit hook from a git repository."""
+    from . import hooks
+
+    removed = hooks.uninstall(str(repo))
+    if removed:
+        typer.echo("✅  graphmem hook removed.")
+    else:
+        typer.echo("graphmem hook not found — nothing to remove.")
+
+
 def main() -> None:
     app()
 
